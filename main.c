@@ -75,12 +75,14 @@ void draw_cubes(GLuint shader)
 {
 	int modelLoc = glGetUniformLocation(shader, "model");
 	int colorLoc = glGetUniformLocation(shader, "uniformColor");
+  /*
+	
 	for(int i = 0; i < 18; i ++) {
 		glUniformMatrix4fv(modelLoc, 1, GL_FALSE, (float*) cube_modelmatrix[i].m);
 		glUniform4f(colorLoc, cube_colors[i].x, cube_colors[i].y, cube_colors[i].z, cube_alpha[i]);
 		glDrawArrays(GL_TRIANGLES, 0, 36);
 	}
-
+  */
 	// floor is 10x10m, 0.1m thick
 	mat4_t floor = m4_identity();
 	floor = m4_mul(floor, m4_scaling(vec3(10, 0.1, 10)));
@@ -104,7 +106,6 @@ void draw_hmd(GLuint shader, mat4_t *model_matrix)
 	glUniform4f(colorLoc, hmd_color.x, hmd_color.y, hmd_color.z, 1.0);
 	glDrawArrays(GL_TRIANGLES, 0, 36);
 }
-
 /*
 void draw_controllers(GLuint shader, ohmd_device *lc, ohmd_device *rc)
 {
@@ -126,7 +127,6 @@ void draw_controllers(GLuint shader, ohmd_device *lc, ohmd_device *rc)
 	glDrawArrays(GL_TRIANGLES, 0, 36);
 }
 */
-
 mat4_t matrix34_to_mat4 (HmdMatrix34_t *mat34)
 {
 	/*
@@ -145,10 +145,26 @@ mat4_t matrix34_to_mat4 (HmdMatrix34_t *mat34)
 	);
 }
 
+
+// clamp pitch to [-89, 89]
+float clampPitch(float p)
+{
+    return p > 89.0f ? 89.0f : (p < -89.0f ? -89.0f : p);   
+}
+
+// clamp yaw to [-180, 180] to reduce floating point inaccuracy
+float clampYaw(float y)
+{
+    float temp = (y + 180.0f) / 360.0f;
+    return y - ((int)temp - (temp < 0.0f ? 1 : 0)) * 360.0f;
+}
+
+
+
 int main(int argc, char** argv)
 {
-	int hmd_w = 1600;
-	int hmd_h = 900;
+	int hmd_w = 2560;
+	int hmd_h = 1440;
 
 	EVRInitError error;
 	VR_InitInternal (&error, EVRApplicationType_VRApplication_Background);
@@ -179,6 +195,13 @@ int main(int argc, char** argv)
 
 	TrackedDevicePose_t poses[k_unMaxTrackedDeviceCount];
 
+	    const float sensitivity = 0.001f; 
+
+#define CTR_X (hmd_w / 2)
+#define CTR_Y (hmd_h / 2)
+#define RESET_MOUSE SDL_WarpMouseInWindow(gl.window, CTR_X, CTR_Y)
+	float yaw = 0, pitch = 0;
+	
 	bool done = false;
 	while(!done){
 		SDL_Event event;
@@ -192,6 +215,18 @@ int main(int argc, char** argv)
 						break;
 				}
 			}
+
+			if (event.type == SDL_MOUSEMOTION)
+			  {
+			    float deltaX = (float)event.motion.x - CTR_X;
+			    float deltaY = (float)event.motion.y - CTR_Y;
+
+			    yaw = clampYaw(yaw + sensitivity * deltaX);
+			    pitch = clampPitch(pitch - sensitivity * deltaY);
+
+			    // reset *every time*
+			    RESET_MOUSE;
+			  }
 		}
 
 		glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
@@ -216,7 +251,7 @@ int main(int argc, char** argv)
 
 		glUniformMatrix4fv(glGetUniformLocation(appshader, "proj"), 1, GL_FALSE, (GLfloat*) projectionmatrix.m);
 
-		vec3_t from = vec3(0, 7.0, 0);
+		vec3_t from = vec3(cos(yaw)* cos(pitch) * 3, sin(pitch) * 3, sin(yaw) * cos(pitch) * 3);
 		vec3_t to = vec3(0, 0.0, -0.0001); // can't look at 0,0,0
 		vec3_t up = vec3(0, 1, 0);
 		mat4_t viewmatrix = m4_look_at(from, to, up);
@@ -227,9 +262,11 @@ int main(int argc, char** argv)
 		//draw_controllers(appshader, lc, rc);
 
 		systemfn->GetDeviceToAbsoluteTrackingPose(ETrackingUniverseOrigin_TrackingUniverseStanding, 0, poses, k_unMaxTrackedDeviceCount);
-		TrackedDevicePose_t* openvr_hmd_pose = &poses[0];
-		mat4_t hmd_modelmatrix = matrix34_to_mat4(&openvr_hmd_pose->mDeviceToAbsoluteTracking);
-		draw_hmd(appshader, &hmd_modelmatrix);
+		for(int i = 0;i < k_unMaxTrackedDeviceCount;i++) {
+		  TrackedDevicePose_t* openvr_hmd_pose = &poses[i];
+		  mat4_t hmd_modelmatrix = matrix34_to_mat4(&openvr_hmd_pose->mDeviceToAbsoluteTracking);
+		  draw_hmd(appshader, &hmd_modelmatrix);
+		}
 
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
