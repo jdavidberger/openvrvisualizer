@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.0)
 
-project(openvrvisualizer LANGUAGES C)
+project(openvrvisualizer LANGUAGES C CXX)
 
 add_executable(openvrvisualizer main.c gl.c)
 
@@ -14,7 +14,9 @@ find_package(SDL2 REQUIRED)
 find_package(GLEW REQUIRED)
 find_package(OpenGL REQUIRED)
 
-target_link_libraries(openvrvisualizer PRIVATE openvr_api openhmd m ${SDL2_LIBRARY} SDL2 ${GLEW_LIBRARIES} ${OPENGL_LIBRARIES})
+target_link_libraries(openvrvisualizer PRIVATE openvr_api dl m ${SDL2_LIBRARY} SDL2 ${GLEW_LIBRARIES} ${OPENGL_LIBRARIES})
+set_target_properties(openvrvisualizer PROPERTIES LINKER_LANGUAGE CXX)
+
 include_directories(/usr/include/SDL2/)
 
 install(TARGETS openvrvisualizer RUNTIME DESTINATION bin)
