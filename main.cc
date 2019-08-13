@@ -17,13 +17,10 @@
 #define degreesToRadians(angleDegrees) ((angleDegrees) * M_PI / 180.0)
 #define radiansToDegrees(angleRadians) ((angleRadians) * 180.0 / M_PI)
 
+#include <openvr/openvr.h>
 
-#include <openvr/openvr_capi.h>
-extern const char * VR_GetVRInitErrorAsSymbol(EVRInitError error);
-extern intptr_t VR_GetGenericInterface(const char *pchInterfaceVersion, EVRInitError *peError);
-extern intptr_t VR_InitInternal(EVRInitError *peError, EVRApplicationType eType);
 struct VR_IVRSystem_FnTable* systemfn;
-void check_error(int line, EVRInitError error) { if (error != 0) printf("%d: error %s\n", line, VR_GetVRInitErrorAsSymbol(error)); }
+void check_error(int line, vr::EVRInitError error) { if (error != 0) printf("%d: error %s\n", line, vr::VR_GetVRInitErrorAsSymbol(error)); }
 
 
 void GLAPIENTRY
@@ -53,25 +50,7 @@ print_matrix(float m[])
 	m[3], m[7], m[11], m[15]);
 }
 
-// cubes arranged in a circle around the user, 20° between them. 360°/20° = 18 cubes
-mat4_t cube_modelmatrix[18];
-vec3_t cube_colors[18];
-float cube_alpha[18];
-
-void gen__cubes()
-{
-	for(int i = 0; i < 18; i ++) {
-		cube_modelmatrix[i] = m4_identity();
-		cube_modelmatrix[i] = m4_mul(cube_modelmatrix[i], m4_rotation(degreesToRadians(i * 20), vec3(0, 1, 0)));
-		cube_modelmatrix[i] = m4_mul(cube_modelmatrix[i], m4_translation(vec3(0, 1.8, -5)));
-		cube_modelmatrix[i] = m4_mul(cube_modelmatrix[i], m4_rotation(degreesToRadians(randf() * 360), vec3(randf(), randf(), randf())));
-
-		cube_colors[i] = vec3(randf(), randf(), randf());
-		cube_alpha[i] = randf();
-	}
-}
-
-void draw_cubes(GLuint shader)
+void draw_floor(GLuint shader)
 {
 	int modelLoc = glGetUniformLocation(shader, "model");
 	int colorLoc = glGetUniformLocation(shader, "uniformColor");
@@ -89,8 +68,8 @@ void draw_cubes(GLuint shader)
 	// we could move the floor to -1.8m height if the HMD tracker sits at zero
 	// floor = m4_mul(floor, m4_translation(vec3(0, -1.8, 0)));
 	glUniformMatrix4fv(modelLoc, 1, GL_FALSE, (float*) floor.m);
-	glUniform4f(colorLoc, 0, .4f, .25f, .9f);
-	glDrawArrays(GL_TRIANGLES, 0, 36);
+    glUniform4f(colorLoc, 0, .4f, .25f, .9f);
+    glDrawArrays(GL_TRIANGLES, 0, 36);
 }
 
 void draw_hmd(GLuint shader, mat4_t *model_matrix)
@@ -98,13 +77,15 @@ void draw_hmd(GLuint shader, mat4_t *model_matrix)
 	int modelLoc = glGetUniformLocation(shader, "model");
 	int colorLoc = glGetUniformLocation(shader, "uniformColor");
 
+	mat4_t scaled = m4_mul(*model_matrix, m4_scaling(vec3(1.0, 1, 1)));
 
-	mat4_t scaled = m4_mul(*model_matrix, m4_scaling(vec3(1.0, 0.5, 0.25)));
-
-	vec3_t hmd_color = vec3(1, 1, 1);
+	vec3_t hmd_color = vec3(1, 1, 0.5);
 	glUniformMatrix4fv(modelLoc, 1, GL_FALSE, (float*) scaled.m);
 	glUniform4f(colorLoc, hmd_color.x, hmd_color.y, hmd_color.z, 1.0);
 	glDrawArrays(GL_TRIANGLES, 0, 36);
+
+    glUniform4f(colorLoc, 1.0, 0, 0, 1.0);
+    glDrawArrays(GL_LINE_STRIP, 0, 36);
 }
 /*
 void draw_controllers(GLuint shader, ohmd_device *lc, ohmd_device *rc)
@@ -127,7 +108,7 @@ void draw_controllers(GLuint shader, ohmd_device *lc, ohmd_device *rc)
 	glDrawArrays(GL_TRIANGLES, 0, 36);
 }
 */
-mat4_t matrix34_to_mat4 (HmdMatrix34_t *mat34)
+mat4_t matrix34_to_mat4 (vr::HmdMatrix34_t *mat34)
 {
 	/*
 	return mat4(
@@ -166,12 +147,14 @@ int main(int argc, char** argv)
 	int hmd_w = 2560;
 	int hmd_h = 1440;
 
-	EVRInitError error;
-	VR_InitInternal (&error, EVRApplicationType_VRApplication_Background);
+
+    vr::EVRInitError error;
+    auto ctx = vr::VR_Init(&error, vr::VRApplication_Background);
+
 	check_error(__LINE__, error);
 
 	char fn_table_name[128];
-	sprintf (fn_table_name, "FnTable:%s", IVRSystem_Version);
+	sprintf (fn_table_name, "FnTable:%s", vr::IVRSystem_Version);
 	systemfn = (struct VR_IVRSystem_FnTable*) VR_GetGenericInterface(fn_table_name, &error);
 	check_error(__LINE__, error);
 
@@ -189,11 +172,9 @@ int main(int argc, char** argv)
 	for (int i = 0; i < 2; i++)
 		create_fbo(hmd_w, hmd_h, &framebuffer, &texture, &depthbuffer);
 
-	gen__cubes();
-
 	SDL_ShowCursor(SDL_DISABLE);
 
-	TrackedDevicePose_t poses[k_unMaxTrackedDeviceCount];
+    vr::TrackedDevicePose_t poses[vr::k_unMaxTrackedDeviceCount];
 
 	    const float sensitivity = 0.001f; 
 
@@ -203,6 +184,10 @@ int main(int argc, char** argv)
 	float yaw = 0, pitch = 0;
 	
 	bool done = false;
+    vr::RenderModel_t *renderModels[vr::k_unMaxTrackedDeviceCount];
+    bool loading[vr::k_unMaxTrackedDeviceCount] = { 0 };
+
+
 	while(!done){
 		SDL_Event event;
 		while(SDL_PollEvent(&event)){
@@ -232,7 +217,6 @@ int main(int argc, char** argv)
 		glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
 
 		glViewport(0, 0, hmd_w, hmd_h);
-		//glScissor(0, 0, hmd_w, hmd_h);
 
 		mat4_t projectionmatrix = m4_perspective(90, (float)hmd_w / (float)hmd_h, 0.001, 100);
 
@@ -258,17 +242,30 @@ int main(int argc, char** argv)
 
 		glUniformMatrix4fv(glGetUniformLocation(appshader, "view"), 1, GL_FALSE, (GLfloat*)viewmatrix.m);
 
-		draw_cubes(appshader);
-		//draw_controllers(appshader, lc, rc);
+        draw_floor(appshader);
 
-		systemfn->GetDeviceToAbsoluteTrackingPose(ETrackingUniverseOrigin_TrackingUniverseStanding, 0, poses, k_unMaxTrackedDeviceCount);
-		for(int i = 0;i < k_unMaxTrackedDeviceCount;i++) {
-		  TrackedDevicePose_t* openvr_hmd_pose = &poses[i];
+		ctx->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseStanding , 0, poses, vr::k_unMaxTrackedDeviceCount);
+		for(size_t i = 0;i < vr::k_unMaxTrackedDeviceCount;i++) {
+		  auto openvr_hmd_pose = &poses[i];
 		  mat4_t hmd_modelmatrix = matrix34_to_mat4(&openvr_hmd_pose->mDeviceToAbsoluteTracking);
 		  draw_hmd(appshader, &hmd_modelmatrix);
 		}
 
-		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        for(size_t i = 0;i < vr::k_unMaxTrackedDeviceCount;i++) {
+            if(loading[i])
+                continue;
+
+            char name[1024] = {};
+
+            vr::ETrackedPropertyError error;
+            ctx->GetStringTrackedDeviceProperty(i, vr::Prop_RenderModelName_String, name, 1024, &error);
+
+            auto rError = vr::VRRenderModels()->LoadRenderModel_Async(name, (renderModels + i));
+            if(rError == vr::VRRenderModelError_None)
+                loading[i] = true;
+        }
+
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
 		glBlitNamedFramebuffer(
 			(GLuint)framebuffer, // readFramebuffer

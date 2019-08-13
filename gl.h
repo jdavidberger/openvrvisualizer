@@ -15,9 +15,16 @@
 #define GL_GLEXT_PROTOTYPES 1
 #define GL3_PROTOTYPES 1
 
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #ifndef __APPLE__
+
 #include <GL/glew.h>
 #include <GL/gl.h>
+
 #else
 #include <GL/gl.h>
 #include <GL/glext.h>
@@ -26,18 +33,26 @@ static inline void glewInit(void) {}
 #endif
 
 typedef struct {
-	int w, h;
-	SDL_Window* window;
-	SDL_GLContext glcontext;
-	int is_fullscreen;
+    int w, h;
+    SDL_Window *window;
+    SDL_GLContext glcontext;
+    int is_fullscreen;
 } gl_ctx;
 
-void ortho(gl_ctx* ctx);
-void perspective(gl_ctx* ctx);
-void init_gl(gl_ctx* ctx, int w, int h, GLuint *VAOs, GLuint *appshader);
+void ortho(gl_ctx *ctx);
+
+void perspective(gl_ctx *ctx);
+
+void init_gl(gl_ctx *ctx, int w, int h, GLuint *VAOs, GLuint *appshader);
+
 void draw_cube();
-GLuint compile_shader(const char* vertex, const char* fragment);
-void create_fbo(int eye_width, int eye_height, GLuint* fbo, GLuint* color_tex, GLuint* depth_tex);
+
+GLuint compile_shader(const char *vertex, const char *fragment);
+
+void create_fbo(int eye_width, int eye_height, GLuint *fbo, GLuint *color_tex, GLuint *depth_tex);
 
 
+#ifdef __cplusplus
+}
+#endif
 #endif

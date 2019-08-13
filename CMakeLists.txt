@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.0)
 
 project(openvrvisualizer LANGUAGES C CXX)
 
-add_executable(openvrvisualizer main.c gl.c)
+add_executable(openvrvisualizer main.cc gl.c)
 
 if(MSVC)
   target_compile_options(openvrvisualizer PRIVATE /W4 /WX)
