@@ -13,6 +13,8 @@
 
 #ifdef __unix
 #include <signal.h>
+#include <assert.h>
+
 #endif
 
 /* Shaders for drawing cubes.
@@ -24,19 +26,26 @@ static char* vertexshader =
 "layout(location = 2) uniform mat4 model;\n"
 "layout(location = 3) uniform mat4 view;\n"
 "layout(location = 4) uniform mat4 proj;\n"
+"layout(location = 5) in vec3 in_Normal;\n"
+"layout(location = 6) in vec2 in_TexCoord;\n"
+"out vec3 color;\n"
+"out vec2 fragTexCoord;\n"
 "void main() {\n"
 "	gl_Position = proj * view * model * vec4(aPos.x, aPos.y, aPos.z, 1.0);\n"
+"   vec4 normal = vec4(in_Normal,1.);\n"
+"   color = clamp(dot(normal.xyz, vec3(1.,1.,1.) ), 0.2, 1.) * vec3(1.,1.,1.) ; // color by normal\n"
 "}\n";
 
 static char* fragmentshader =
 "#version 450 core\n"
 "layout(location = 0) out vec4 FragColor;\n"
 "layout(location = 1) uniform vec4 uniformColor;\n"
+"in vec3 color;\n"
 "void main() {\n"
-"	FragColor = vec4(uniformColor);\n"
+"	FragColor = vec4(color, 1.0) * uniformColor;\n"
 "}\n";
 
-void init_gl(gl_ctx* ctx, int w, int h, GLuint *VAOs, GLuint *appshader)
+GLuint init_gl(gl_ctx* ctx, int w, int h, GLuint *VAOs, GLuint *appshader)
 {
 	memset(ctx, 0, sizeof(gl_ctx));
 
@@ -144,12 +153,13 @@ void init_gl(gl_ctx* ctx, int w, int h, GLuint *VAOs, GLuint *appshader)
 	glBindVertexArray(VAOs[0]);
 	glBindBuffer(GL_ARRAY_BUFFER, VBOs[0]);
 	glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_DYNAMIC_DRAW);
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*) 0);
-	glEnableVertexAttribArray(0);
 
-	glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_DYNAMIC_DRAW);
-	glVertexAttribPointer(5, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*) (3 * sizeof(float)));
-	glEnableVertexAttribArray(5);
+    int aPosLoc = glGetAttribLocation(*appshader, "aPos");
+    int inNormalLoc = glGetAttribLocation(*appshader, "in_Normal");
+	glVertexAttribPointer(aPosLoc, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*) 0);
+
+    glEnableVertexAttribArray(aPosLoc);
+    glEnableVertexAttribArray(inNormalLoc);
 
 	glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
 	glClear(GL_COLOR_BUFFER_BIT);
@@ -157,31 +167,13 @@ void init_gl(gl_ctx* ctx, int w, int h, GLuint *VAOs, GLuint *appshader)
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-	glUseProgram(0);
-	glEnableVertexAttribArray(0);
-	glBindVertexArray(0);
+	glUseProgram(*appshader);
+	glBindVertexArray(aPosLoc);
 
-	// One big triangle that covers the screen space from -1,-1 to 1,1.
-	// Just like a quad made out of two smaller triangles would.
-	float quadvertices[] = {
-		-1, 3,
-		-1, -1,
-		3, -1
-	};
-	GLuint distortionVBO[1];
-	glGenBuffers(1, distortionVBO);
-
-	glGenVertexArrays(1, &VAOs[1]);
-
-	glBindVertexArray(VAOs[1]);
-	glBindBuffer(GL_ARRAY_BUFFER, distortionVBO[0]);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(quadvertices), quadvertices, GL_DYNAMIC_DRAW);
-	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*) 0);
-	glEnableVertexAttribArray(0);
-	glBindVertexArray(0);
+	return VBOs[0];
 }
 
-static void compile_shader_src(GLuint shader, const char* src)
+static int compile_shader_src(GLuint shader, const char* src)
 {
 	glShaderSource(shader, 1, &src, NULL);
 	glCompileShader(shader);
@@ -195,7 +187,9 @@ static void compile_shader_src(GLuint shader, const char* src)
 		char log[infoLogLength + 1];
 		glGetShaderInfoLog(shader, infoLogLength, &infoLogLength, log);
 		printf("compile failed: %s\n", log);
+		return 0;
 	}
+	return 1;
 }
 
 GLuint compile_shader(const char* vertex, const char* fragment)
@@ -210,11 +204,12 @@ GLuint compile_shader(const char* vertex, const char* fragment)
 	glAttachShader(programShader, fragmentShader);
 
 	// Load and compile the Vertex Shader
-	compile_shader_src(vertexShader, vertex);
+	int s1 = compile_shader_src(vertexShader, vertex);
 
 	// Load and compile the Fragment Shader
-	compile_shader_src(fragmentShader, fragment);
+	int s2 = compile_shader_src(fragmentShader, fragment);
 
+	assert(s1 && s2);
 	// The shader objects are not needed any more,
 	// the programShader is the complete shader to be used.
 	glDeleteShader(vertexShader);

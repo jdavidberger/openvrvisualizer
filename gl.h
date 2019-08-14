@@ -43,7 +43,7 @@ void ortho(gl_ctx *ctx);
 
 void perspective(gl_ctx *ctx);
 
-void init_gl(gl_ctx *ctx, int w, int h, GLuint *VAOs, GLuint *appshader);
+GLuint init_gl(gl_ctx *ctx, int w, int h, GLuint *VAOs, GLuint *appshader);
 
 void draw_cube();
 

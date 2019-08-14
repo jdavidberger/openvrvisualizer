@@ -18,6 +18,8 @@
 #define radiansToDegrees(angleRadians) ((angleRadians) * 180.0 / M_PI)
 
 #include <openvr/openvr.h>
+#include <vector>
+#include <iostream>
 
 struct VR_IVRSystem_FnTable* systemfn;
 void check_error(int line, vr::EVRInitError error) { if (error != 0) printf("%d: error %s\n", line, vr::VR_GetVRInitErrorAsSymbol(error)); }
@@ -50,7 +52,7 @@ print_matrix(float m[])
 	m[3], m[7], m[11], m[15]);
 }
 
-void draw_floor(GLuint shader)
+void draw_floor(GLuint shader, GLuint floor_buffer)
 {
 	int modelLoc = glGetUniformLocation(shader, "model");
 	int colorLoc = glGetUniformLocation(shader, "uniformColor");
@@ -68,7 +70,13 @@ void draw_floor(GLuint shader)
 	// we could move the floor to -1.8m height if the HMD tracker sits at zero
 	// floor = m4_mul(floor, m4_translation(vec3(0, -1.8, 0)));
 	glUniformMatrix4fv(modelLoc, 1, GL_FALSE, (float*) floor.m);
-    glUniform4f(colorLoc, 0, .4f, .25f, .9f);
+    glUniform4f(colorLoc, 1., 1., 1.f, .4f);
+
+    int aPosLoc = glGetAttribLocation(shader, "aPos");
+
+    glBindBuffer(GL_ARRAY_BUFFER, floor_buffer);
+    glVertexAttribPointer(aPosLoc, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*) 0);
+
     glDrawArrays(GL_TRIANGLES, 0, 36);
 }
 
@@ -77,7 +85,7 @@ void draw_hmd(GLuint shader, mat4_t *model_matrix)
 	int modelLoc = glGetUniformLocation(shader, "model");
 	int colorLoc = glGetUniformLocation(shader, "uniformColor");
 
-	mat4_t scaled = m4_mul(*model_matrix, m4_scaling(vec3(1.0, 1, 1)));
+	mat4_t scaled = m4_mul(*model_matrix, m4_scaling(vec3(0.1, .1, .1)));
 
 	vec3_t hmd_color = vec3(1, 1, 0.5);
 	glUniformMatrix4fv(modelLoc, 1, GL_FALSE, (float*) scaled.m);
@@ -108,7 +116,7 @@ void draw_controllers(GLuint shader, ohmd_device *lc, ohmd_device *rc)
 	glDrawArrays(GL_TRIANGLES, 0, 36);
 }
 */
-mat4_t matrix34_to_mat4 (vr::HmdMatrix34_t *mat34)
+mat4_t matrix34_to_mat4 (const vr::HmdMatrix34_t *mat34)
 {
 	/*
 	return mat4(
@@ -140,7 +148,87 @@ float clampYaw(float y)
     return y - ((int)temp - (temp < 0.0f ? 1 : 0)) * 360.0f;
 }
 
+vr::RenderModel_t *renderModels[vr::k_unMaxTrackedDeviceCount];
+bool loading[vr::k_unMaxTrackedDeviceCount] = { 0 };
 
+struct OnScreenObject {
+    bool loadingRenderModel = false;
+    vr::RenderModel_t *renderModel = 0;
+    vr::IVRSystem * ctx = 0;
+    int idx = -1;
+    GLuint mBuffer = -1;
+    GLuint elementbuffer = -1;
+
+    void LoadRenderModel() {
+        if(loadingRenderModel)
+            return;
+
+        char name[1024] = {};
+
+        vr::ETrackedPropertyError error;
+        ctx->GetStringTrackedDeviceProperty(idx, vr::Prop_RenderModelName_String, name, 1024, &error);
+
+        auto rError = vr::VRRenderModels()->LoadRenderModel_Async(name, &renderModel);
+        if(rError == vr::VRRenderModelError_None) {
+            std::cout << "Loading " << name << std::endl;
+            loadingRenderModel = true;
+        }
+    }
+
+    void Draw(GLuint appshader, const vr::TrackedDevicePose_t& openvr_hmd_pose) {
+        if(renderModel == 0) {
+            LoadRenderModel();
+            return;
+        }
+        if(mBuffer == (GLuint)-1 && renderModel) {
+            std::vector<uint16_t> indices;
+            indices.resize(renderModel->unTriangleCount * 3);
+            for(int i = 0;i < renderModel->unTriangleCount * 3;i++) {
+                indices[i] = renderModel->rIndexData[i];
+            }
+
+            glGenBuffers(1, &elementbuffer);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, elementbuffer);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(indices[0]), &indices[0], GL_STATIC_DRAW);
+
+            glGenBuffers(1, &mBuffer);
+            glBindBuffer(GL_ARRAY_BUFFER, mBuffer);
+            glBufferData(GL_ARRAY_BUFFER, renderModel->unVertexCount * sizeof(renderModel->rVertexData[0]),
+                    renderModel->rVertexData, GL_DYNAMIC_DRAW);
+        }
+
+
+        mat4_t hmd_modelmatrix = matrix34_to_mat4(&openvr_hmd_pose.mDeviceToAbsoluteTracking);
+
+        int modelLoc = glGetUniformLocation(appshader, "model");
+        int colorLoc = glGetUniformLocation(appshader, "uniformColor");
+
+        mat4_t scaled = m4_mul(hmd_modelmatrix, m4_scaling(vec3(1, 1, 1)));
+
+        vec3_t hmd_color = vec3(1, 1, 0.5);
+        glUniformMatrix4fv(modelLoc, 1, GL_FALSE, (float*) scaled.m);
+        glUniform4f(colorLoc, hmd_color.x, hmd_color.y, hmd_color.z, 1.0);
+
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, elementbuffer);
+        glBindBuffer(GL_ARRAY_BUFFER, mBuffer);
+
+        int aNormLoc = glGetAttribLocation(appshader, "in_Normal");
+        int aPosLoc = glGetAttribLocation(appshader, "aPos");
+
+        int vertex_stride = sizeof(renderModel->rVertexData[0]);
+        int pos_offset = 0;
+        glVertexAttribPointer(aPosLoc, 3, GL_FLOAT, false, vertex_stride, (GLvoid*)offsetof(vr::RenderModel_Vertex_t, vPosition));
+
+        int norm_offset = offsetof(vr::RenderModel_Vertex_t, vNormal);
+        glVertexAttribPointer(aNormLoc, 3, GL_FLOAT, false, vertex_stride, (GLvoid*)norm_offset);
+
+        glDrawElements(GL_TRIANGLES, renderModel->unTriangleCount * 3, GL_UNSIGNED_SHORT, (void*)0);
+
+        //glUniform4f(colorLoc, 1.0, 0, 0, 1.0);
+        //glDrawArrays(GL_LINE_STRIP, 0, 36);
+
+    }
+};
 
 int main(int argc, char** argv)
 {
@@ -151,6 +239,8 @@ int main(int argc, char** argv)
     vr::EVRInitError error;
     auto ctx = vr::VR_Init(&error, vr::VRApplication_Background);
 
+    assert(ctx);
+
 	check_error(__LINE__, error);
 
 	char fn_table_name[128];
@@ -159,9 +249,9 @@ int main(int argc, char** argv)
 	check_error(__LINE__, error);
 
 	gl_ctx gl;
-	GLuint VAOs[2];
+	GLuint VAOs[2] = {};
 	GLuint appshader;
-	init_gl(&gl, hmd_w, hmd_h, VAOs, &appshader);
+	auto floor_buffer = init_gl(&gl, hmd_w, hmd_h, VAOs, &appshader);
 
 	glEnable(GL_DEBUG_OUTPUT);
 	glDebugMessageCallback(gl_debug_callback, 0);
@@ -176,17 +266,22 @@ int main(int argc, char** argv)
 
     vr::TrackedDevicePose_t poses[vr::k_unMaxTrackedDeviceCount];
 
+    OnScreenObject objs[vr::k_unMaxTrackedDeviceCount];
+    for(size_t i = 0;i < vr::k_unMaxTrackedDeviceCount;i++) {
+        objs[i].ctx = ctx;
+        objs[i].idx = i;
+    }
+
 	    const float sensitivity = 0.001f; 
 
 #define CTR_X (hmd_w / 2)
 #define CTR_Y (hmd_h / 2)
 #define RESET_MOUSE SDL_WarpMouseInWindow(gl.window, CTR_X, CTR_Y)
-	float yaw = 0, pitch = 0;
+	float yaw = 0, pitch = 45;
 	
 	bool done = false;
-    vr::RenderModel_t *renderModels[vr::k_unMaxTrackedDeviceCount];
-    bool loading[vr::k_unMaxTrackedDeviceCount] = { 0 };
 
+	float dist = 3.0;
 
 	while(!done){
 		SDL_Event event;
@@ -196,6 +291,12 @@ int main(int argc, char** argv)
 					case SDLK_ESCAPE:
 						done = true;
 						break;
+				    case SDLK_EQUALS:
+				        dist -= .1;
+				        break;
+				    case SDLK_MINUS:
+				        dist += .1;
+				        break;
 					default:
 						break;
 				}
@@ -218,7 +319,7 @@ int main(int argc, char** argv)
 
 		glViewport(0, 0, hmd_w, hmd_h);
 
-		mat4_t projectionmatrix = m4_perspective(90, (float)hmd_w / (float)hmd_h, 0.001, 100);
+		mat4_t projectionmatrix = m4_perspective(45, (float)hmd_w / (float)hmd_h, 0.001, 100);
 
 		glUseProgram(appshader);
 		glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
@@ -235,34 +336,19 @@ int main(int argc, char** argv)
 
 		glUniformMatrix4fv(glGetUniformLocation(appshader, "proj"), 1, GL_FALSE, (GLfloat*) projectionmatrix.m);
 
-		vec3_t from = vec3(cos(yaw)* cos(pitch) * 3, sin(pitch) * 3, sin(yaw) * cos(pitch) * 3);
+		vec3_t from = vec3(cos(yaw)* cos(pitch) * dist, sin(pitch) * dist, sin(yaw) * cos(pitch) * dist);
 		vec3_t to = vec3(0, 0.0, -0.0001); // can't look at 0,0,0
 		vec3_t up = vec3(0, 1, 0);
 		mat4_t viewmatrix = m4_look_at(from, to, up);
 
 		glUniformMatrix4fv(glGetUniformLocation(appshader, "view"), 1, GL_FALSE, (GLfloat*)viewmatrix.m);
 
-        draw_floor(appshader);
+        //draw_floor(appshader, floor_buffer);
 
-		ctx->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseStanding , 0, poses, vr::k_unMaxTrackedDeviceCount);
-		for(size_t i = 0;i < vr::k_unMaxTrackedDeviceCount;i++) {
-		  auto openvr_hmd_pose = &poses[i];
-		  mat4_t hmd_modelmatrix = matrix34_to_mat4(&openvr_hmd_pose->mDeviceToAbsoluteTracking);
-		  draw_hmd(appshader, &hmd_modelmatrix);
-		}
+        ctx->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseStanding , 0, poses, vr::k_unMaxTrackedDeviceCount);
 
         for(size_t i = 0;i < vr::k_unMaxTrackedDeviceCount;i++) {
-            if(loading[i])
-                continue;
-
-            char name[1024] = {};
-
-            vr::ETrackedPropertyError error;
-            ctx->GetStringTrackedDeviceProperty(i, vr::Prop_RenderModelName_String, name, 1024, &error);
-
-            auto rError = vr::VRRenderModels()->LoadRenderModel_Async(name, (renderModels + i));
-            if(rError == vr::VRRenderModelError_None)
-                loading[i] = true;
+            objs[i].Draw(appshader, poses[i]);
         }
 
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
