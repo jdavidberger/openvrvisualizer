@@ -21,9 +21,7 @@
 #include <vector>
 #include <iostream>
 
-struct VR_IVRSystem_FnTable* systemfn;
 void check_error(int line, vr::EVRInitError error) { if (error != 0) printf("%d: error %s\n", line, vr::VR_GetVRInitErrorAsSymbol(error)); }
-
 
 void GLAPIENTRY
 gl_debug_callback(GLenum source, GLenum type, GLuint id, GLenum severity,
@@ -32,24 +30,6 @@ gl_debug_callback(GLenum source, GLenum type, GLuint id, GLenum severity,
 	fprintf(stderr, "GL DEBUG CALLBACK: %s type = 0x%x, severity = 0x%x, message = %s\n",
 			(type == GL_DEBUG_TYPE_ERROR ? "** GL ERROR **" : "" ),
 			type, severity, message);
-}
-
-float randf()
-{
-	return (float)rand() / (float)RAND_MAX;
-}
-
-static inline void
-print_matrix(float m[])
-{
-	printf("[[%0.4f, %0.4f, %0.4f, %0.4f],\n"
-	"[%0.4f, %0.4f, %0.4f, %0.4f],\n"
-	"[%0.4f, %0.4f, %0.4f, %0.4f],\n"
-	"[%0.4f, %0.4f, %0.4f, %0.4f]]\n",
-	m[0], m[4], m[8], m[12],
-	m[1], m[5], m[9], m[13],
-	m[2], m[6], m[10], m[14],
-	m[3], m[7], m[11], m[15]);
 }
 
 void draw_floor(GLuint shader, GLuint floor_buffer)
@@ -84,53 +64,8 @@ void draw_floor(GLuint shader, GLuint floor_buffer)
     glEnableVertexAttribArray(inNormalLoc);
 
 }
-
-void draw_hmd(GLuint shader, mat4_t *model_matrix)
-{
-	int modelLoc = glGetUniformLocation(shader, "model");
-	int colorLoc = glGetUniformLocation(shader, "uniformColor");
-
-	mat4_t scaled = m4_mul(*model_matrix, m4_scaling(vec3(0.1, .1, .1)));
-
-	vec3_t hmd_color = vec3(1, 1, 0.5);
-	glUniformMatrix4fv(modelLoc, 1, GL_FALSE, (float*) scaled.m);
-	glUniform4f(colorLoc, hmd_color.x, hmd_color.y, hmd_color.z, 1.0);
-	glDrawArrays(GL_TRIANGLES, 0, 36);
-
-    glUniform4f(colorLoc, 1.0, 0, 0, 1.0);
-    glDrawArrays(GL_LINE_STRIP, 0, 36);
-}
-/*
-void draw_controllers(GLuint shader, ohmd_device *lc, ohmd_device *rc)
-{
-	int modelLoc = glGetUniformLocation(shader, "model");
-	int colorLoc = glGetUniformLocation(shader, "uniformColor");
-
-	mat4_t lcmodel;
-	ohmd_device_getf(lc, OHMD_GL_MODEL_MATRIX, (float*) lcmodel.m);
-	lcmodel = m4_mul(lcmodel, m4_scaling(vec3(0.03, 0.03, 0.1)));
-	glUniformMatrix4fv(modelLoc, 1, GL_FALSE, (float*) lcmodel.m);
-	glUniform4f(colorLoc, 1.0, 0.0, 0.0, 1.0);
-	glDrawArrays(GL_TRIANGLES, 0, 36);
-
-	mat4_t rcmodel;
-	ohmd_device_getf(rc, OHMD_GL_MODEL_MATRIX, (float*) rcmodel.m);
-	rcmodel = m4_mul(rcmodel, m4_scaling(vec3(0.03, 0.03, 0.1)));
-	glUniformMatrix4fv(modelLoc, 1, GL_FALSE, (float*) rcmodel.m);
-	glUniform4f(colorLoc, 0.0, 1.0, 0.0, 1.0);
-	glDrawArrays(GL_TRIANGLES, 0, 36);
-}
-*/
 mat4_t matrix34_to_mat4 (const vr::HmdMatrix34_t *mat34)
 {
-	/*
-	return mat4(
-		mat34->m[0][0], mat34->m[1][0], mat34->m[2][0], 0,
-		mat34->m[0][1], mat34->m[1][1], mat34->m[2][1], 0,
-		mat34->m[0][2], mat34->m[1][2], mat34->m[2][2], 0,
-		mat34->m[0][3], mat34->m[1][3], mat34->m[2][3], 1
-	);
-	*/
 	return mat4(
 		mat34->m[0][0], mat34->m[0][1], mat34->m[0][2], mat34->m[0][3],
 		mat34->m[1][0], mat34->m[1][1], mat34->m[1][2], mat34->m[1][3],
@@ -153,14 +88,11 @@ float clampYaw(float y)
     return y - ((int)temp - (temp < 0.0f ? 1 : 0)) * 360.0f;
 }
 
-vr::RenderModel_t *renderModels[vr::k_unMaxTrackedDeviceCount];
-bool loading[vr::k_unMaxTrackedDeviceCount] = { 0 };
-
 struct OnScreenObject {
     bool loadingRenderModel = false, loadingTexture = false;
-    vr::RenderModel_t *renderModel = 0;
-    vr::RenderModel_TextureMap_t* textureMap = 0;
-    vr::IVRSystem * ctx = 0;
+    vr::RenderModel_t *renderModel = nullptr;
+    vr::RenderModel_TextureMap_t* textureMap = nullptr;
+    vr::IVRSystem * ctx = nullptr;
     int idx = -1;
     GLuint mTexture = -1;
     GLuint mBuffer = -1;
@@ -201,15 +133,10 @@ struct OnScreenObject {
             LoadTexture();
             return;
         } else if(mBuffer == (GLuint)-1 && renderModel) {
-            std::vector<uint16_t> indices;
-            indices.resize(renderModel->unTriangleCount * 3);
-            for(int i = 0;i < renderModel->unTriangleCount * 3;i++) {
-                indices[i] = renderModel->rIndexData[i];
-            }
-
             glGenBuffers(1, &elementbuffer);
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, elementbuffer);
-            glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(indices[0]), &indices[0], GL_STATIC_DRAW);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, renderModel->unTriangleCount * 3 * sizeof(renderModel->rIndexData[0]),
+                    renderModel->rIndexData, GL_STATIC_DRAW);
 
             glGenBuffers(1, &mBuffer);
             glBindBuffer(GL_ARRAY_BUFFER, mBuffer);
@@ -293,16 +220,15 @@ int main(int argc, char** argv)
 
 	char fn_table_name[128];
 	sprintf (fn_table_name, "FnTable:%s", vr::IVRSystem_Version);
-	systemfn = (struct VR_IVRSystem_FnTable*) VR_GetGenericInterface(fn_table_name, &error);
 	check_error(__LINE__, error);
 
 	gl_ctx gl;
 	GLuint VAOs[2] = {};
 	GLuint appshader;
-	auto floor_buffer = init_gl(&gl, hmd_w, hmd_h, VAOs, &appshader);
+	init_gl(&gl, hmd_w, hmd_h, VAOs, &appshader);
 
 	glEnable(GL_DEBUG_OUTPUT);
-	glDebugMessageCallback(gl_debug_callback, 0);
+	glDebugMessageCallback(gl_debug_callback, nullptr);
 
 	GLuint texture;
 	GLuint framebuffer;
