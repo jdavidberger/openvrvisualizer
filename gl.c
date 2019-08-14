@@ -28,21 +28,25 @@ static char* vertexshader =
 "layout(location = 4) uniform mat4 proj;\n"
 "layout(location = 5) in vec3 in_Normal;\n"
 "layout(location = 6) in vec2 in_TexCoord;\n"
-"out vec3 color;\n"
+"out float theta;\n"
 "out vec2 fragTexCoord;\n"
 "void main() {\n"
+"   fragTexCoord = in_TexCoord;\n"
 "	gl_Position = proj * view * model * vec4(aPos.x, aPos.y, aPos.z, 1.0);\n"
-"   vec4 normal = vec4(in_Normal,1.);\n"
-"   color = clamp(dot(normal.xyz, vec3(1.,1.,1.) ), 0.2, 1.) * vec3(1.,1.,1.) ; // color by normal\n"
+"   vec4 normal = model * vec4(in_Normal,0.);\n"
+"   theta = clamp(dot(normal.xyz, vec3(1.,1.,1.) ), 0.2, 1.); // color by normal\n"
 "}\n";
 
 static char* fragmentshader =
 "#version 450 core\n"
 "layout(location = 0) out vec4 FragColor;\n"
 "layout(location = 1) uniform vec4 uniformColor;\n"
-"in vec3 color;\n"
+"uniform sampler2D mytexture;\n"
+"in float theta;\n"
+"in vec2 fragTexCoord;\n"
 "void main() {\n"
-"	FragColor = vec4(color, 1.0) * uniformColor;\n"
+"   vec4 texColor = texture(mytexture, fragTexCoord);\n"
+"	FragColor = vec4(theta * texColor.rgb, texColor.a);\n"
 "}\n";
 
 GLuint init_gl(gl_ctx* ctx, int w, int h, GLuint *VAOs, GLuint *appshader)

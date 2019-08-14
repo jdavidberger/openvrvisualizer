@@ -68,16 +68,21 @@ void draw_floor(GLuint shader, GLuint floor_buffer)
 	mat4_t floor = m4_identity();
 	floor = m4_mul(floor, m4_scaling(vec3(10, 0.1, 10)));
 	// we could move the floor to -1.8m height if the HMD tracker sits at zero
-	// floor = m4_mul(floor, m4_translation(vec3(0, -1.8, 0)));
+	 floor = m4_mul(floor, m4_translation(vec3(0, 2, 0)));
 	glUniformMatrix4fv(modelLoc, 1, GL_FALSE, (float*) floor.m);
     glUniform4f(colorLoc, 1., 1., 1.f, .4f);
 
     int aPosLoc = glGetAttribLocation(shader, "aPos");
+    int inNormalLoc = glGetAttribLocation(shader, "in_Normal");
+
+    glDisableVertexAttribArray(inNormalLoc);
 
     glBindBuffer(GL_ARRAY_BUFFER, floor_buffer);
     glVertexAttribPointer(aPosLoc, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*) 0);
 
     glDrawArrays(GL_TRIANGLES, 0, 36);
+    glEnableVertexAttribArray(inNormalLoc);
+
 }
 
 void draw_hmd(GLuint shader, mat4_t *model_matrix)
@@ -152,10 +157,12 @@ vr::RenderModel_t *renderModels[vr::k_unMaxTrackedDeviceCount];
 bool loading[vr::k_unMaxTrackedDeviceCount] = { 0 };
 
 struct OnScreenObject {
-    bool loadingRenderModel = false;
+    bool loadingRenderModel = false, loadingTexture = false;
     vr::RenderModel_t *renderModel = 0;
+    vr::RenderModel_TextureMap_t* textureMap = 0;
     vr::IVRSystem * ctx = 0;
     int idx = -1;
+    GLuint mTexture = -1;
     GLuint mBuffer = -1;
     GLuint elementbuffer = -1;
 
@@ -175,12 +182,25 @@ struct OnScreenObject {
         }
     }
 
+    void LoadTexture() {
+        if(loadingTexture)
+            return;
+
+        auto error = vr::VRRenderModels()->LoadTexture_Async( renderModel->diffuseTextureId, &textureMap );
+        if(error == vr::VRRenderModelError_None) {
+            loadingTexture = true;
+        }
+    }
+
     void Draw(GLuint appshader, const vr::TrackedDevicePose_t& openvr_hmd_pose) {
         if(renderModel == 0) {
             LoadRenderModel();
             return;
         }
-        if(mBuffer == (GLuint)-1 && renderModel) {
+        if(textureMap == 0 && renderModel) {
+            LoadTexture();
+            return;
+        } else if(mBuffer == (GLuint)-1 && renderModel) {
             std::vector<uint16_t> indices;
             indices.resize(renderModel->unTriangleCount * 3);
             for(int i = 0;i < renderModel->unTriangleCount * 3;i++) {
@@ -195,6 +215,25 @@ struct OnScreenObject {
             glBindBuffer(GL_ARRAY_BUFFER, mBuffer);
             glBufferData(GL_ARRAY_BUFFER, renderModel->unVertexCount * sizeof(renderModel->rVertexData[0]),
                     renderModel->rVertexData, GL_DYNAMIC_DRAW);
+
+            // Texture loading
+            glGenTextures(1, &mTexture);
+            glBindTexture( GL_TEXTURE_2D, mTexture);
+
+            glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA, textureMap->unWidth, textureMap->unHeight,
+                          0, GL_RGBA, GL_UNSIGNED_BYTE, textureMap->rubTextureMapData );
+            glGenerateMipmap(GL_TEXTURE_2D);
+
+            glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+            glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+            glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+            glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR );
+
+            GLfloat fLargest;
+            glGetFloatv( GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &fLargest );
+            glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, fLargest );
+
+            glBindTexture( GL_TEXTURE_2D, 0 );
         }
 
 
@@ -205,7 +244,7 @@ struct OnScreenObject {
 
         mat4_t scaled = m4_mul(hmd_modelmatrix, m4_scaling(vec3(1, 1, 1)));
 
-        vec3_t hmd_color = vec3(1, 1, 0.5);
+        vec3_t hmd_color = vec3(1, 1, 1);
         glUniformMatrix4fv(modelLoc, 1, GL_FALSE, (float*) scaled.m);
         glUniform4f(colorLoc, hmd_color.x, hmd_color.y, hmd_color.z, 1.0);
 
@@ -214,13 +253,21 @@ struct OnScreenObject {
 
         int aNormLoc = glGetAttribLocation(appshader, "in_Normal");
         int aPosLoc = glGetAttribLocation(appshader, "aPos");
+        int texLoc  = glGetAttribLocation(appshader, "in_TexCoord");
 
         int vertex_stride = sizeof(renderModel->rVertexData[0]);
-        int pos_offset = 0;
-        glVertexAttribPointer(aPosLoc, 3, GL_FLOAT, false, vertex_stride, (GLvoid*)offsetof(vr::RenderModel_Vertex_t, vPosition));
+        glEnableVertexAttribArray(texLoc);
 
-        int norm_offset = offsetof(vr::RenderModel_Vertex_t, vNormal);
-        glVertexAttribPointer(aNormLoc, 3, GL_FLOAT, false, vertex_stride, (GLvoid*)norm_offset);
+        glVertexAttribPointer(aPosLoc, 3, GL_FLOAT, false, vertex_stride, (GLvoid*)offsetof(vr::RenderModel_Vertex_t, vPosition));
+        if(aNormLoc != -1)
+            glVertexAttribPointer(aNormLoc, 3, GL_FLOAT, false, vertex_stride, (GLvoid*)offsetof(vr::RenderModel_Vertex_t, vNormal));
+        glVertexAttribPointer(texLoc, 2, GL_FLOAT, false, vertex_stride, (GLvoid*)offsetof(vr::RenderModel_Vertex_t, rfTextureCoord));
+
+        auto textureLoc = glGetUniformLocation(appshader, "mytexture");
+        glUniform1i(textureLoc, 0);
+
+        glActiveTexture( GL_TEXTURE0 );
+        glBindTexture( GL_TEXTURE_2D, mTexture );
 
         glDrawElements(GL_TRIANGLES, renderModel->unTriangleCount * 3, GL_UNSIGNED_SHORT, (void*)0);
 
@@ -235,6 +282,7 @@ int main(int argc, char** argv)
 	int hmd_w = 2560;
 	int hmd_h = 1440;
 
+    vec3_t look_at = {};
 
     vr::EVRInitError error;
     auto ctx = vr::VR_Init(&error, vr::VRApplication_Background);
@@ -337,8 +385,11 @@ int main(int argc, char** argv)
 		glUniformMatrix4fv(glGetUniformLocation(appshader, "proj"), 1, GL_FALSE, (GLfloat*) projectionmatrix.m);
 
 		vec3_t from = vec3(cos(yaw)* cos(pitch) * dist, sin(pitch) * dist, sin(yaw) * cos(pitch) * dist);
-		vec3_t to = vec3(0, 0.0, -0.0001); // can't look at 0,0,0
+        from = v3_add(from, look_at);
+
+		vec3_t to = look_at; // can't look at 0,0,0
 		vec3_t up = vec3(0, 1, 0);
+		//up = v3_add(to, up);
 		mat4_t viewmatrix = m4_look_at(from, to, up);
 
 		glUniformMatrix4fv(glGetUniformLocation(appshader, "view"), 1, GL_FALSE, (GLfloat*)viewmatrix.m);
@@ -348,7 +399,17 @@ int main(int argc, char** argv)
         ctx->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseStanding , 0, poses, vr::k_unMaxTrackedDeviceCount);
 
         for(size_t i = 0;i < vr::k_unMaxTrackedDeviceCount;i++) {
+            if(!poses[i].bPoseIsValid)
+                continue;
+
             objs[i].Draw(appshader, poses[i]);
+
+            auto clss = ctx->GetTrackedDeviceClass(i);
+            if(clss != vr::TrackedDeviceClass_TrackingReference && look_at.x == 0.0 && look_at.y == 0.0 && look_at.y == 0.0) {
+                look_at.x = poses[i].mDeviceToAbsoluteTracking.m[0][3];
+                look_at.y = poses[i].mDeviceToAbsoluteTracking.m[1][3];
+                look_at.z = poses[i].mDeviceToAbsoluteTracking.m[2][3];
+            }
         }
 
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
